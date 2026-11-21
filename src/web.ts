@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -40,6 +41,28 @@ function resolveContentPath(name: string): string | null {
     }
 
     return targetPath;
+}
+
+// custom: cache-busting for the web client. The page imports client.js?v=<hash>, so a new
+// build gets a new URL and no browser or CDN (e.g. a Cloudflare tunnel) keeps serving an
+// old copy. The hash is recomputed only when the file's size or mtime changes.
+const clientJsPath = path.join(process.cwd(), 'public', 'client', 'client.js');
+let clientVersionStat = '';
+let clientVersionHash = '0';
+
+function getClientVersion(): string {
+    try {
+        const stat = fs.statSync(clientJsPath);
+        const key = `${stat.size}:${stat.mtimeMs}`;
+        if (key !== clientVersionStat) {
+            clientVersionHash = crypto.createHash('sha1').update(fs.readFileSync(clientJsPath)).digest('hex').slice(0, 12);
+            clientVersionStat = key;
+        }
+    } catch {
+        // missing client: fall back to the last known version
+    }
+
+    return clientVersionHash;
 }
 
 function fileExists(filePath: string): boolean {
@@ -150,7 +173,8 @@ fastify.get<{ Querystring: { plugin?: string; lowmem?: string } }>('/rs2.cgi', a
         return reply.viewAsync('client.ejs', {
             nodeid: Environment.node.id,
             members: Environment.node.members,
-            lowmem
+            lowmem,
+            clientVersion: getClientVersion()
         });
     }
 });
